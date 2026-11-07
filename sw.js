@@ -8,7 +8,7 @@
  * - 修改应用版本时同步更新 CACHE 名称。
  */
 
-const APP_VERSION = '1.0.3';
+const APP_VERSION = '1.0.4';
 const CACHE_PREFIX = 'gps-recorder-shell-';
 const CACHE = `${CACHE_PREFIX}v${APP_VERSION}-r1`;
 

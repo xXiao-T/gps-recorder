@@ -214,6 +214,30 @@ test('记录中刷新后自动恢复轨迹', async ({ page, context }) => {
   await expect(page.locator('.pill')).toContainText('记录中');
 });
 
+test('在定位页刷新也会自动恢复记录', async ({ page, context }) => {
+  await page.goto('./#/record');
+  await page.getByRole('button', { name: '开始记录' }).click();
+  const startSheet = page.locator('dialog.sheet');
+  await startSheet.getByLabel('时间间隔（秒）').fill('0');
+  await startSheet.getByLabel('最小移动距离（米）').fill('0');
+  await startSheet.getByLabel('精度阈值（米）').fill('0');
+  await startSheet.getByRole('button', { name: '开始记录' }).click();
+  await expect(page.locator('.pill')).toContainText(/记录中|等待定位/);
+  await page.waitForTimeout(1000);
+  await expect(page.locator('.pill')).toContainText('记录中');
+
+  // 离开轨迹页后刷新：应用启动时应不依赖当前 Tab 自动恢复
+  await page.locator('[data-tab="locate"]').click();
+  await expect(page.getByRole('button', { name: '获取当前位置' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('已自动恢复记录中的轨迹')).toBeVisible();
+  await expect(page.locator('[data-tab="record"]')).toHaveClass(/recording/);
+
+  await page.locator('[data-tab="record"]').click();
+  await expect(page.locator('.pill')).toContainText(/记录中|等待定位/);
+  await expect(page.locator('.draft-card')).toHaveCount(0);
+});
+
 test('暂停中的草稿刷新后需要手动继续', async ({ page, context }) => {
   await page.goto('./#/record');
   await page.getByRole('button', { name: '开始记录' }).click();

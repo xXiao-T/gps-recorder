@@ -4,7 +4,7 @@
  */
 
 export const APP_NAME = '点迹';
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.0.4';
 
 export const DB_NAME = 'gps-recorder-db';
 export const DB_VERSION = 1;

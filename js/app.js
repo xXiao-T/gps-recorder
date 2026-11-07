@@ -3,9 +3,11 @@
  */
 
 import { openDb } from './db.js';
+import { getGeolocationPermissionState } from './location.js';
 import { loadPrefs } from './prefs.js';
 import {
   getSnapshot as getRecorderSnapshot,
+  recoverAndResume as recoverRecorderDraft,
   subscribe as subscribeRecorder,
 } from './recorder.js';
 import { getDraft } from './repository.js';
@@ -190,7 +192,10 @@ async function route() {
     return;
   }
 
-  if (routeConfig.tab === 'record') removeBanner('draft');
+  if (routeConfig.tab === 'record') {
+    removeBanner('draft');
+    removeBanner('draft-restored');
+  }
 
   const token = ++routeToken;
   closeAllSheets();
@@ -230,6 +235,64 @@ async function route() {
 // ---------------------------------------------------------------------------
 // 启动
 // ---------------------------------------------------------------------------
+
+const RECENT_DRAFT_MS = 10 * 60 * 1000;
+
+/**
+ * 刷新/重开时恢复最近仍在记录的草稿。
+ * 注意：不依赖当前路由；即使用户在定位页刷新，也会在后台恢复记录。
+ */
+async function restoreRecentDraft() {
+  let draft = null;
+  try {
+    draft = await getDraft();
+  } catch {
+    return;
+  }
+  if (!draft) return;
+
+  const recentActive =
+    Number.isFinite(draft.segmentStartedAt) &&
+    Date.now() - (draft.updatedAt || 0) < RECENT_DRAFT_MS;
+
+  if (recentActive) {
+    try {
+      const permission = await getGeolocationPermissionState();
+      if (permission === 'granted') {
+        await recoverRecorderDraft(draft);
+        const status = getRecorderSnapshot().status;
+        if (status === 'acquiring' || status === 'recording') {
+          showBanner({
+            id: 'draft-restored',
+            message: '已自动恢复记录中的轨迹',
+            action: '查看',
+            onAction: () => {
+              removeBanner('draft-restored');
+              location.hash = '#/record';
+            },
+            dismissible: true,
+          });
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('自动恢复轨迹失败', error);
+    }
+  }
+
+  if (location.hash !== '#/record') {
+    showBanner({
+      id: 'draft',
+      message: '有未完成的轨迹记录',
+      action: '继续',
+      onAction: () => {
+        removeBanner('draft');
+        location.hash = '#/record';
+      },
+      dismissible: true,
+    });
+  }
+}
 
 async function boot() {
   settingsButton.addEventListener('click', () => {
@@ -283,24 +346,8 @@ async function boot() {
     history.replaceState(null, '', '#/locate');
   }
 
-  // 刷新/重新打开后，在任意页面提示未完成轨迹；记录页会自动恢复“记录中”的草稿。
-  try {
-    const draft = await getDraft();
-    if (draft && location.hash !== '#/record') {
-      showBanner({
-        id: 'draft',
-        message: '有未完成的轨迹记录',
-        action: '继续',
-        onAction: () => {
-          removeBanner('draft');
-          location.hash = '#/record';
-        },
-        dismissible: true,
-      });
-    }
-  } catch {
-    /* 数据读取失败时由页面自行提示 */
-  }
+  // 刷新/重新打开时，不依赖当前 Tab 自动恢复最近仍在记录的草稿。
+  await restoreRecentDraft();
 
   await route();
 
