@@ -11,6 +11,8 @@ import {
   formatDistance,
   formatDuration,
 } from '../format.js';
+import { getGeolocationPermissionState } from '../location.js';
+import { showLocationPermissionHelp } from '../location-permission-ui.js';
 import { MapView } from '../map-view.js';
 import { getCachedPrefs, loadPrefs, savePrefs } from '../prefs.js';
 import { getDraft, listTrackPoints, updateTrackMeta } from '../repository.js';
@@ -305,6 +307,46 @@ export async function mount(root) {
     const canRetry =
       !isStorage &&
       ['acquiring', 'recording', 'paused'].includes(s.status);
+    const canOpenPermissionHelp = s.error.code === 'denied';
+
+    const retryButton = canRetry
+      ? h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn small secondary',
+            onclick: () => recorder.retry(),
+          },
+          '重试定位',
+        )
+      : null;
+
+    const permissionHelpButton = canOpenPermissionHelp
+      ? h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn small secondary',
+            onclick: () => {
+              showLocationPermissionHelp({
+                onCheck: async () => {
+                  const state = await getGeolocationPermissionState();
+                  if (state === 'granted') {
+                    toast('定位权限已开启，重试定位…', { type: 'success' });
+                    void recorder.retry();
+                  } else {
+                    toast('仍未检测到定位权限，请按说明开启', {
+                      type: 'error',
+                      duration: 4000,
+                    });
+                  }
+                },
+              });
+            },
+          },
+          '开启定位权限',
+        )
+      : null;
 
     alerts.append(
       h(
@@ -322,15 +364,12 @@ export async function mount(root) {
                 text: '请检查浏览器存储空间；已有轨迹可在“记录”页查看和导出。',
               })
             : null,
-          canRetry
+          canRetry || canOpenPermissionHelp
             ? h(
-                'button',
-                {
-                  type: 'button',
-                  class: 'btn small secondary',
-                  onclick: () => recorder.retry(),
-                },
-                '重试定位',
+                'div',
+                { class: 'btn-row compact' },
+                permissionHelpButton,
+                retryButton,
               )
             : null,
         ),

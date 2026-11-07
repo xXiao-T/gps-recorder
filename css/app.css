@@ -18,6 +18,7 @@
   --accent-soft: #e6f0ff;
   --accent-contrast: #ffffff;
   --success: #12813c;
+  --success-soft: #e8f7ee;
   --warning: #a45f00;
   --warning-soft: #fff3d8;
   --danger: #d92d42;
@@ -46,6 +47,7 @@
     --accent-soft: #10263f;
     --accent-contrast: #04101f;
     --success: #5ddc8a;
+    --success-soft: #10251a;
     --warning: #ffca6b;
     --warning-soft: #2d2412;
     --danger: #ff7183;
@@ -487,6 +489,12 @@ svg {
   background: var(--accent-strong);
 }
 
+.btn.primary.cancel-mode {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--line);
+}
+
 .btn.secondary {
   background: var(--surface-2);
   color: var(--text);
@@ -788,9 +796,66 @@ svg {
   color: var(--warning);
 }
 
+.badge-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge-ok {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
 .badge-live {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.permission-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.permission-copy {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.permission-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.permission-head strong {
+  font-size: 14px;
+}
+
+.permission-card .btn {
+  flex: none;
+  min-height: 38px;
+}
+
+.permission-steps {
+  margin: 0;
+  padding-left: 1.25em;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.permission-steps li + li {
+  margin-top: 6px;
 }
 
 .coord-list {

@@ -76,16 +76,92 @@ function assertSupport() {
 }
 
 /**
+ * 查询定位权限状态：granted / prompt / denied / unknown / insecure / unsupported。
+ * 部分浏览器不支持 Permissions API 时会返回 unknown，由实际定位请求触发询问。
+ */
+export async function getGeolocationPermissionState() {
+  const support = checkLocationSupport();
+  if (support) {
+    if (support.code === 'insecure') return 'insecure';
+    if (support.code === 'unsupported') return 'unsupported';
+  }
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) {
+    return 'unknown';
+  }
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' });
+    return status.state || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * 监听定位权限变化；回调会立即触发一次。返回取消监听的函数。
+ * @param {(state:string)=>void} callback
+ */
+export function watchGeolocationPermission(callback) {
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) {
+    callback('unknown');
+    return () => {};
+  }
+
+  let status = null;
+  let cancelled = false;
+  navigator.permissions
+    .query({ name: 'geolocation' })
+    .then((result) => {
+      if (cancelled) return;
+      status = result;
+      callback(result.state || 'unknown');
+      result.onchange = () => callback(result.state || 'unknown');
+    })
+    .catch(() => {
+      if (!cancelled) callback('unknown');
+    });
+
+  return () => {
+    cancelled = true;
+    if (status) status.onchange = null;
+  };
+}
+
+/**
  * 获取一次当前位置。
+ *
+ * 除了传给 Geolocation API 的 timeout，还加了一个自己的 JS 定时器：
+ * 当权限弹窗一直未被处理时，某些浏览器不会触发原生 timeout，页面会看起来“卡死”。
+ * 自己的定时器保证 Promise 一定结束，让 UI 可以恢复并提示用户检查权限。
+ *
  * @param {{timeout?:number}} [options]
  * @returns {Promise<object>}
  */
 export function getCurrentFix({ timeout = 20_000 } = {}) {
   assertSupport();
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+
+    const finish = (handler, value) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      handler(value);
+    };
+
+    timer = setTimeout(() => {
+      finish(
+        reject,
+        new LocationError(
+          'timeout',
+          '等待定位超时。若浏览器弹出了权限询问，请先选择“允许”；若没有弹窗，请检查本站的定位权限与系统定位开关。',
+        ),
+      );
+    }, timeout);
+
     navigator.geolocation.getCurrentPosition(
-      (position) => resolve(normalizePosition(position)),
-      (error) => reject(mapGeolocationError(error)),
+      (position) => finish(resolve, normalizePosition(position)),
+      (error) => finish(reject, mapGeolocationError(error)),
       { enableHighAccuracy: true, maximumAge: 0, timeout },
     );
   });
