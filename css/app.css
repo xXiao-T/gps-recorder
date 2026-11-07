@@ -268,6 +268,7 @@ svg {
 }
 
 .tab {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -278,6 +279,35 @@ svg {
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.02em;
+}
+
+.tab::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: calc(50% - 21px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+}
+
+.tab.recording::after {
+  opacity: 1;
+  transform: scale(1);
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+  animation: breathe 1.3s ease-in-out infinite;
+}
+
+.tab.paused::after {
+  opacity: 1;
+  transform: scale(1);
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
 }
 
 .tab svg {

@@ -174,7 +174,7 @@ test('权限询问未处理时可取消，并有超时兜底', async ({ page }) 
   });
 });
 
-test('记录等待首个 GPS 信号超时后给出诊断与重试入口', async ({ page }) => {
+test('记录等待首个 GPS 信号超时后给出诊断，并可低精度重试', async ({ page }) => {
   await page.addInitScript(() => {
     const status = { state: 'granted', onchange: null };
     Object.defineProperty(navigator, 'permissions', {
@@ -185,7 +185,28 @@ test('记录等待首个 GPS 信号超时后给出诊断与重试入口', async 
       configurable: true,
       value: {
         getCurrentPosition: () => {},
-        watchPosition: () => 1,
+        watchPosition: (success, error, options) => {
+          window.__watchOptions = window.__watchOptions || [];
+          const highAccuracy = Boolean(options?.enableHighAccuracy);
+          window.__watchOptions.push(highAccuracy);
+          if (!highAccuracy) {
+            setTimeout(() => {
+              success({
+                coords: {
+                  latitude: 39.9087,
+                  longitude: 116.3975,
+                  accuracy: 500,
+                  altitude: null,
+                  altitudeAccuracy: null,
+                  heading: null,
+                  speed: null,
+                },
+                timestamp: Date.now(),
+              });
+            }, 20);
+          }
+          return window.__watchOptions.length;
+        },
         clearWatch: () => {},
       },
     });
@@ -205,8 +226,71 @@ test('记录等待首个 GPS 信号超时后给出诊断与重试入口', async 
   await expect(page.locator('.alert-card')).toContainText('20 秒未收到 GPS 信号');
   await expect(page.getByRole('button', { name: '重试定位' })).toBeVisible();
   await expect(page.getByRole('button', { name: '开启定位权限' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '低精度重试' })).toBeVisible();
   await page.screenshot({
     path: path.join(ARTIFACTS, 'record-no-fix.png'),
     fullPage: true,
   });
+
+  await page.getByRole('button', { name: '低精度重试' }).click();
+  await page.clock.fastForward(200);
+  await expect(page.locator('.pill')).toContainText('记录中');
+  await expect(page.locator('.sample-summary')).toContainText('低精度模式');
+  await expect(page.locator('.stat').filter({ hasText: '点数' }).locator('.stat-value')).toHaveText('1');
+  await page.screenshot({
+    path: path.join(ARTIFACTS, 'record-low-accuracy.png'),
+    fullPage: true,
+  });
+});
+
+test('开始记录时可手动选择室内低精度模式', async ({ page }) => {
+  await page.addInitScript(() => {
+    const status = { state: 'granted', onchange: null };
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: async () => status },
+    });
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: () => {},
+        watchPosition: (success, error, options) => {
+          window.__watchOptions = window.__watchOptions || [];
+          const highAccuracy = Boolean(options?.enableHighAccuracy);
+          window.__watchOptions.push(highAccuracy);
+          if (!highAccuracy) {
+            setTimeout(() => {
+              success({
+                coords: {
+                  latitude: 39.9087,
+                  longitude: 116.3975,
+                  accuracy: 400,
+                  altitude: null,
+                  altitudeAccuracy: null,
+                  heading: null,
+                  speed: null,
+                },
+                timestamp: Date.now(),
+              });
+            }, 20);
+          }
+          return window.__watchOptions.length;
+        },
+        clearWatch: () => {},
+      },
+    });
+  });
+
+  await page.goto('./#/record');
+  await page.getByRole('button', { name: '开始记录' }).click();
+  const startSheet = page.locator('dialog.sheet');
+  await startSheet.getByLabel(/室内低精度模式/).check();
+  await startSheet.getByRole('button', { name: '开始记录' }).click();
+
+  await expect(page.locator('.pill')).toContainText('记录中');
+  await expect(page.locator('.sample-summary')).toContainText('低精度模式');
+  expect(await page.evaluate(() => window.__watchOptions)).toContain(false);
+  await expect(
+    page.locator('.stat').filter({ hasText: '点数' }).locator('.stat-value'),
+  ).toHaveText('1');
 });

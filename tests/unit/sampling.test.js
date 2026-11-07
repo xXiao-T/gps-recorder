@@ -27,12 +27,15 @@ test('normalizeSample 补全与容错', () => {
     minIntervalSec: 0,
     minDistanceM: 3,
     maxAccuracyM: 30,
+    lowAccuracy: false,
   });
   assert.deepEqual(normalizeSample({ minIntervalSec: -1, minDistanceM: 'x' }), {
     minIntervalSec: 5,
     minDistanceM: 3,
     maxAccuracyM: 30,
+    lowAccuracy: false,
   });
+  assert.equal(normalizeSample({ lowAccuracy: true }).lowAccuracy, true);
 });
 
 test('首个点通过精度后直接接受', () => {

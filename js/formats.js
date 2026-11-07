@@ -106,6 +106,7 @@ function sampleXml(sample) {
     `minIntervalSec="${escapeXml(sample.minIntervalSec ?? 0)}"`,
     `minDistanceM="${escapeXml(sample.minDistanceM ?? 0)}"`,
     `maxAccuracyM="${escapeXml(sample.maxAccuracyM ?? 0)}"`,
+    `lowAccuracy="${sample.lowAccuracy ? 'true' : 'false'}"`,
   ].join(' ');
   return `      <gpsrec:sampling ${attrs}/>\n`;
 }
@@ -303,7 +304,7 @@ function kmlTrack(track, points) {
     [
       'sampling',
       track.sample
-        ? `interval=${track.sample.minIntervalSec}s;distance=${track.sample.minDistanceM}m;accuracy=${track.sample.maxAccuracyM}m`
+        ? `interval=${track.sample.minIntervalSec}s;distance=${track.sample.minDistanceM}m;accuracy=${track.sample.maxAccuracyM}m;lowAccuracy=${track.sample.lowAccuracy ? 'true' : 'false'}`
         : '',
     ],
     ['note', track.note],

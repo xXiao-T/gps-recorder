@@ -38,6 +38,7 @@ const state = {
   lastFixAt: null,
   pendingSegment: false,
   sample: null,
+  lowAccuracy: false,
   keepAwake: true,
   error: null,
   wakeLock: 'off',
@@ -67,6 +68,7 @@ function snapshot(now = Date.now()) {
     lastAccepted: state.lastAccepted,
     error: state.error,
     sample: state.sample || track?.sample || null,
+    lowAccuracy: state.lowAccuracy,
     keepAwake: state.keepAwake,
     wakeLock: state.wakeLock,
     pendingSegment: state.pendingSegment,
@@ -374,6 +376,7 @@ function resetToIdle({ clearFix = true } = {}) {
   state.lastFixAt = null;
   state.pendingSegment = false;
   state.sample = null;
+  state.lowAccuracy = false;
   state.error = null;
   startName = null;
   if (clearFix) state.latestFix = null;
@@ -382,7 +385,7 @@ function resetToIdle({ clearFix = true } = {}) {
 /**
  * 开始一次新的轨迹记录；第一个通过精度检查的点会创建草稿。
  * @param {object} sampleInput
- * @param {{name?:string}} [options]
+ * @param {{name?:string, lowAccuracy?:boolean}} [options]
  */
 export async function start(sampleInput, options = {}) {
   if (starting) throw new Error('正在开始记录，请稍候');
@@ -411,11 +414,20 @@ export async function start(sampleInput, options = {}) {
     state.keepAwake = prefs.keepAwake;
     state.error = null;
     state.lastCompleted = null;
+    state.lowAccuracy = Boolean(options.lowAccuracy);
+    state.sample = normalizeSample({
+      ...sample,
+      lowAccuracy: state.lowAccuracy,
+    });
     startName = options.name || null;
     notify();
 
     try {
-      startWatch({ onFix: handleFix, onError: handleLocationError });
+      startWatch({
+        onFix: handleFix,
+        onError: handleLocationError,
+        enableHighAccuracy: !state.lowAccuracy,
+      });
       scheduleAcquiringTimeout();
     } catch (error) {
       clearAcquiringTimer();
@@ -479,7 +491,11 @@ export async function resume() {
   notify();
 
   try {
-    startWatch({ onFix: handleFix, onError: handleLocationError });
+    startWatch({
+      onFix: handleFix,
+      onError: handleLocationError,
+      enableHighAccuracy: !state.lowAccuracy,
+    });
     scheduleAcquiringTimeout();
   } catch (error) {
     clearAcquiringTimer();
@@ -538,8 +554,11 @@ export async function stop() {
   }
 }
 
-/** 尝试重新连接定位；记录中会先关闭当前段，下一有效点开新段。 */
-export async function retry() {
+/**
+ * 尝试重新连接定位；记录中会先关闭当前段，下一有效点开新段。
+ * @param {{lowAccuracy?:boolean}} [options]
+ */
+export async function retry(options = {}) {
   if (
     state.status !== 'acquiring' &&
     state.status !== 'recording' &&
@@ -557,6 +576,18 @@ export async function retry() {
   stopWatch();
   state.error = null;
 
+  if (options.lowAccuracy) {
+    state.lowAccuracy = true;
+    if (!oldTrack && state.sample) {
+      // 还没有首点时，低精度重试同时关闭精度阈值，否则室内网络定位会被丢弃
+      state.sample = normalizeSample({
+        ...state.sample,
+        lowAccuracy: true,
+        maxAccuracyM: 0,
+      });
+    }
+  }
+
   if (oldTrack && Number.isFinite(oldTrack.segmentStartedAt)) {
     enqueue(async () => {
       if (!state.track) return;
@@ -571,7 +602,11 @@ export async function retry() {
   notify();
 
   try {
-    startWatch({ onFix: handleFix, onError: handleLocationError });
+    startWatch({
+      onFix: handleFix,
+      onError: handleLocationError,
+      enableHighAccuracy: !state.lowAccuracy,
+    });
     scheduleAcquiringTimeout();
   } catch (error) {
     clearAcquiringTimer();
@@ -626,6 +661,7 @@ export async function recoverAndResume(track) {
     state.lastFixAt = null;
     state.pendingSegment = true;
     state.sample = normalizeSample(recovered.sample);
+    state.lowAccuracy = Boolean(recovered.sample?.lowAccuracy);
     state.keepAwake = prefs.keepAwake;
     state.error = null;
     state.lastCompleted = null;
@@ -633,7 +669,11 @@ export async function recoverAndResume(track) {
     notify();
 
     try {
-      startWatch({ onFix: handleFix, onError: handleLocationError });
+      startWatch({
+        onFix: handleFix,
+        onError: handleLocationError,
+        enableHighAccuracy: !state.lowAccuracy,
+      });
       scheduleAcquiringTimeout();
     } catch (error) {
       clearAcquiringTimer();

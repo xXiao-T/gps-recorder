@@ -156,7 +156,40 @@ test('刷新后记录仍保留', async ({ page }) => {
   await expect(page.getByRole('button', { name: /刷新测试点/ })).toBeVisible();
 });
 
-test('记录中刷新后出现草稿并可继续', async ({ page, context }) => {
+test('切到底部其他标签再回来，轨迹仍在继续记录', async ({ page, context }) => {
+  await page.goto('./#/record');
+  await page.getByRole('button', { name: '开始记录' }).click();
+  const startSheet = page.locator('dialog.sheet');
+  await startSheet.getByLabel('时间间隔（秒）').fill('0');
+  await startSheet.getByLabel('最小移动距离（米）').fill('0');
+  await startSheet.getByLabel('精度阈值（米）').fill('0');
+  await startSheet.getByRole('button', { name: '开始记录' }).click();
+  await expect(page.locator('.pill')).toContainText(/记录中|等待定位/);
+  await page.waitForTimeout(1000);
+  await expect(page.locator('.pill')).toContainText('记录中');
+
+  const pointsStat = page.locator('.stat').filter({ hasText: '点数' });
+  const before = Number(await pointsStat.locator('.stat-value').textContent());
+
+  // 切到定位页，记录器应继续在后台接收 fix，轨迹 Tab 上有记录中指示点
+  await page.locator('[data-tab="locate"]').click();
+  await expect(page.getByRole('button', { name: '获取当前位置' })).toBeVisible();
+  await expect(page.locator('[data-tab="record"]')).toHaveClass(/recording/);
+  await context.setGeolocation({
+    latitude: 39.912,
+    longitude: 116.400,
+    accuracy: 8,
+  });
+  await page.waitForTimeout(1500);
+
+  // 再切到记录列表、然后回到轨迹页
+  await page.locator('[data-tab="saved"]').click();
+  await page.locator('[data-tab="record"]').click();
+  await expect(page.locator('.pill')).toContainText('记录中');
+  await expect(pointsStat.locator('.stat-value')).not.toHaveText(String(before));
+});
+
+test('记录中刷新后自动恢复轨迹', async ({ page, context }) => {
   await page.goto('./#/record');
   await page.getByRole('button', { name: '开始记录' }).click();
   const startSheet = page.locator('dialog.sheet');
@@ -170,9 +203,36 @@ test('记录中刷新后出现草稿并可继续', async ({ page, context }) => 
   await expect(page.locator('.pill')).toContainText('记录中');
 
   await page.reload();
+  await expect(page.locator('.pill')).toContainText(/等待定位|记录中/);
+  await expect(page.locator('.draft-card')).toHaveCount(0);
+
+  await context.setGeolocation({
+    latitude: 39.911,
+    longitude: 116.399,
+    accuracy: 8,
+  });
+  await expect(page.locator('.pill')).toContainText('记录中');
+});
+
+test('暂停中的草稿刷新后需要手动继续', async ({ page, context }) => {
+  await page.goto('./#/record');
+  await page.getByRole('button', { name: '开始记录' }).click();
+  const startSheet = page.locator('dialog.sheet');
+  await startSheet.getByLabel('时间间隔（秒）').fill('0');
+  await startSheet.getByLabel('最小移动距离（米）').fill('0');
+  await startSheet.getByLabel('精度阈值（米）').fill('0');
+  await startSheet.getByRole('button', { name: '开始记录' }).click();
+
+  await expect(page.locator('.pill')).toContainText(/记录中|等待定位/);
+  await page.waitForTimeout(1000);
+  await expect(page.locator('.pill')).toContainText('记录中');
+  await page.getByRole('button', { name: '暂停' }).click();
+  await expect(page.locator('.pill')).toContainText('已暂停');
+  await page.waitForTimeout(800);
+
+  await page.reload();
   await expect(page.locator('.draft-card')).toBeVisible();
   await expect(page.locator('.draft-card')).toContainText('发现未完成轨迹');
-
   await page.locator('.draft-card').getByRole('button', { name: '继续记录' }).click();
   await expect(page.locator('.pill')).toContainText(/等待定位|记录中/);
   await expect(page.locator('.draft-card')).toHaveCount(0);

@@ -56,6 +56,7 @@ export async function mount(root) {
   let prefs = await loadPrefs();
   let followEnabled = prefs.autoFollow;
   let draft = null;
+  let autoResumeAttempted = false;
   let actionBusy = false;
   let controlsKey = '';
   let loadedTrackId = null;
@@ -308,6 +309,8 @@ export async function mount(root) {
       !isStorage &&
       ['acquiring', 'recording', 'paused'].includes(s.status);
     const canOpenPermissionHelp = ['denied', 'no-fix'].includes(s.error.code);
+    const canTryLowAccuracy =
+      !s.track && !s.lowAccuracy && s.error.code === 'no-fix';
 
     const retryButton = canRetry
       ? h(
@@ -318,6 +321,21 @@ export async function mount(root) {
             onclick: () => recorder.retry(),
           },
           '重试定位',
+        )
+      : null;
+
+    const lowAccuracyButton = canTryLowAccuracy
+      ? h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn small secondary',
+            onclick: () => {
+              recorder.retry({ lowAccuracy: true });
+              toast('已切换到室内低精度模式，等待定位…', { type: 'info' });
+            },
+          },
+          '低精度重试',
         )
       : null;
 
@@ -364,11 +382,12 @@ export async function mount(root) {
                 text: '请检查浏览器存储空间；已有轨迹可在“记录”页查看和导出。',
               })
             : null,
-          canRetry || canOpenPermissionHelp
+          canRetry || canOpenPermissionHelp || canTryLowAccuracy
             ? h(
                 'div',
                 { class: 'btn-row compact' },
                 permissionHelpButton,
+                lowAccuracyButton,
                 retryButton,
               )
             : null,
@@ -624,9 +643,17 @@ export async function mount(root) {
           help: '精度差于此值的定位点会被丢弃；0 表示不限制。',
           required: true,
         },
+        {
+          name: 'lowAccuracy',
+          label: '室内低精度模式',
+          type: 'checkbox',
+          value: false,
+          help: '使用 Wi-Fi/基站定位，延迟更高、精度较低；本次记录不限制精度阈值。',
+        },
       ],
       validate: (formValues) => {
-        for (const value of Object.values(formValues)) {
+        for (const key of ['minIntervalSec', 'minDistanceM', 'maxAccuracyM']) {
+          const value = formValues[key];
           if (value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) {
             return '请输入有效的非负数字';
           }
@@ -641,18 +668,24 @@ export async function mount(root) {
     });
     if (!values) return;
 
-    const sample = {
+    const lowAccuracy = Boolean(values.lowAccuracy);
+    const sampleDefaults = {
       minIntervalSec: Number(values.minIntervalSec),
       minDistanceM: Number(values.minDistanceM),
       maxAccuracyM: Number(values.maxAccuracyM),
+    };
+    const sample = {
+      ...sampleDefaults,
+      // 室内模式下若保留 30 米阈值，Wi-Fi/基站定位几乎都会被丢弃
+      maxAccuracyM: lowAccuracy ? 0 : sampleDefaults.maxAccuracyM,
     };
 
     actionBusy = true;
     renderControls(recorder.getSnapshot(), true);
     try {
-      await recorder.start(sample);
+      await recorder.start(sample, { lowAccuracy });
       try {
-        await savePrefs({ sampleDefaults: sample });
+        await savePrefs({ sampleDefaults });
       } catch {
         /* 默认值保存失败不影响本次记录 */
       }
@@ -662,7 +695,11 @@ export async function mount(root) {
       hasCentered = false;
       mapView?.startLiveTrack([]);
       mapView?.clearCurrent();
-      toast('已开始，等待定位…');
+      toast(
+        lowAccuracy
+          ? '已开始（室内低精度模式），等待定位…'
+          : '已开始，等待定位…',
+      );
     } catch (error) {
       toast(error.message || '无法开始记录', { type: 'error' });
     } finally {
@@ -730,13 +767,44 @@ export async function mount(root) {
       renderDraftSlot(lastSnapshot);
       return;
     }
+
+    let found = null;
     try {
-      const found = await getDraft();
-      if (destroyed) return;
-      draft = found;
+      found = await getDraft();
     } catch {
-      draft = null;
+      found = null;
     }
+    if (destroyed) return;
+
+    // 页面/App 被刷新或回收后：若草稿上次处于“记录中”且足够新，权限也已允许，
+    // 自动恢复记录；暂停中的草稿仍要求用户手动继续。
+    if (
+      found &&
+      !autoResumeAttempted &&
+      Number.isFinite(found.segmentStartedAt) &&
+      Date.now() - (found.updatedAt || 0) < 10 * 60 * 1000
+    ) {
+      autoResumeAttempted = true;
+      const permission = await getGeolocationPermissionState();
+      if (destroyed) return;
+      if (permission === 'granted') {
+        try {
+          await recorder.recoverAndResume(found);
+          if (!destroyed) {
+            draft = null;
+            renderDraftSlot(recorder.getSnapshot());
+            toast('已自动恢复记录中的轨迹', { type: 'success' });
+            return;
+          }
+        } catch (error) {
+          toast(error.message || '自动恢复失败，请手动继续', {
+            type: 'error',
+          });
+        }
+      }
+    }
+
+    draft = found;
     if (!destroyed) renderDraftSlot(recorder.getSnapshot());
   }
 

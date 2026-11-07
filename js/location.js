@@ -269,15 +269,19 @@ export function getCurrentFix({
 
 /**
  * 开始持续监听定位。始终只有一个 watch。
- * @param {{onFix:(fix:object)=>void, onError:(error:LocationError)=>void}} handlers
+ * @param {{onFix:(fix:object)=>void, onError:(error:LocationError)=>void, enableHighAccuracy?:boolean}} handlers
  */
-export function startWatch({ onFix, onError }) {
+export function startWatch({ onFix, onError, enableHighAccuracy = true }) {
   assertSupport();
   stopWatch();
   watchId = navigator.geolocation.watchPosition(
     (position) => onFix(normalizePosition(position)),
     (error) => onError(mapGeolocationError(error)),
-    { enableHighAccuracy: true, maximumAge: 0, timeout: 15_000 },
+    {
+      enableHighAccuracy: Boolean(enableHighAccuracy),
+      maximumAge: 0,
+      timeout: 15_000,
+    },
   );
   return watchId;
 }

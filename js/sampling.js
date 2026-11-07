@@ -22,6 +22,7 @@ export function normalizeSample(input = {}) {
     minIntervalSec: number(input.minIntervalSec, 5),
     minDistanceM: number(input.minDistanceM, 3),
     maxAccuracyM: number(input.maxAccuracyM, 30),
+    lowAccuracy: Boolean(input.lowAccuracy),
   };
 }
 

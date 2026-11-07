@@ -83,6 +83,7 @@ function clampSample(raw) {
     minIntervalSec: clamp(sample.minIntervalSec, SAMPLE_LIMITS.minIntervalSec),
     minDistanceM: clamp(sample.minDistanceM, SAMPLE_LIMITS.minDistanceM),
     maxAccuracyM: clamp(sample.maxAccuracyM, SAMPLE_LIMITS.maxAccuracyM),
+    lowAccuracy: Boolean(sample.lowAccuracy),
   };
 }
 

@@ -125,5 +125,8 @@ export function describeSample(sample) {
   if (Number(sample?.maxAccuracyM) > 0) {
     parts.push(`精度 ≤ ${sample.maxAccuracyM} 米`);
   }
+  if (sample?.lowAccuracy) {
+    parts.push('低精度模式');
+  }
   return parts.join(' · ');
 }

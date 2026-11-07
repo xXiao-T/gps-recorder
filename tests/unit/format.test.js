@@ -49,6 +49,15 @@ test('采样规则描述', () => {
     describeSample({ minIntervalSec: 0, minDistanceM: 0, maxAccuracyM: 0 }),
     '每个通过精度检查的定位点',
   );
+  assert.equal(
+    describeSample({
+      minIntervalSec: 5,
+      minDistanceM: 3,
+      maxAccuracyM: 0,
+      lowAccuracy: true,
+    }),
+    '每 5 秒且移动 ≥ 3 米 · 低精度模式',
+  );
 });
 
 test('默认名称与字节格式化', () => {

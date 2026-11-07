@@ -4,7 +4,11 @@
 
 import { openDb } from './db.js';
 import { loadPrefs } from './prefs.js';
-import { getSnapshot as getRecorderSnapshot } from './recorder.js';
+import {
+  getSnapshot as getRecorderSnapshot,
+  subscribe as subscribeRecorder,
+} from './recorder.js';
+import { getDraft } from './repository.js';
 import { applyUpdate, registerServiceWorker } from './sw-register.js';
 import { closeAllSheets, h, icon } from './ui.js';
 import { mount as mountLocate } from './pages/locate.js';
@@ -135,6 +139,23 @@ function updateActiveTab(tab) {
   }
 }
 
+function updateRecordTabIndicator(snapshot) {
+  const tab = document.querySelector('[data-tab="record"]');
+  if (!tab) return;
+  const active =
+    snapshot.status === 'acquiring' || snapshot.status === 'recording';
+  tab.classList.toggle('recording', active);
+  tab.classList.toggle('paused', snapshot.status === 'paused');
+  if (active || snapshot.status === 'paused') {
+    tab.setAttribute(
+      'aria-label',
+      active ? '轨迹，正在记录' : '轨迹，记录已暂停',
+    );
+  } else {
+    tab.removeAttribute('aria-label');
+  }
+}
+
 function renderFatal(error) {
   appRoot.replaceChildren(
     h(
@@ -168,6 +189,8 @@ async function route() {
     location.replace('#/locate');
     return;
   }
+
+  if (routeConfig.tab === 'record') removeBanner('draft');
 
   const token = ++routeToken;
   closeAllSheets();
@@ -213,6 +236,8 @@ async function boot() {
     if (location.hash !== '#/settings') location.hash = '#/settings';
   });
 
+  subscribeRecorder(updateRecordTabIndicator);
+
   window.addEventListener('hashchange', () => void route());
   updateOnlineBanner();
   window.addEventListener('online', updateOnlineBanner);
@@ -257,6 +282,26 @@ async function boot() {
   if (!location.hash) {
     history.replaceState(null, '', '#/locate');
   }
+
+  // 刷新/重新打开后，在任意页面提示未完成轨迹；记录页会自动恢复“记录中”的草稿。
+  try {
+    const draft = await getDraft();
+    if (draft && location.hash !== '#/record') {
+      showBanner({
+        id: 'draft',
+        message: '有未完成的轨迹记录',
+        action: '继续',
+        onAction: () => {
+          removeBanner('draft');
+          location.hash = '#/record';
+        },
+        dismissible: true,
+      });
+    }
+  } catch {
+    /* 数据读取失败时由页面自行提示 */
+  }
+
   await route();
 
   registerServiceWorker({
