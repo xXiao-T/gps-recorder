@@ -1,0 +1,16 @@
+{
+  "name": "dianji-gps-recorder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "点迹 · 移动端 GPS 经纬点与线路记录 PWA",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js",
+    "test:e2e": "playwright test",
+    "serve": "python3 -m http.server 8080 --directory ..",
+    "icons": "python3 scripts/generate_icons.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0"
+  }
+}
