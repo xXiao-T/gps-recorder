@@ -64,7 +64,8 @@ test('未授权时先显示说明，再触发浏览器授权并成功定位', as
     Object.defineProperty(navigator, 'geolocation', {
       configurable: true,
       value: {
-        getCurrentPosition: (success) => {
+        getCurrentPosition: () => {},
+        watchPosition: (success) => {
           window.__geoCalled = (window.__geoCalled || 0) + 1;
           setTimeout(() => {
             success({
@@ -80,8 +81,8 @@ test('未授权时先显示说明，再触发浏览器授权并成功定位', as
               timestamp: Date.now(),
             });
           }, 20);
+          return 1;
         },
-        watchPosition: () => 1,
         clearWatch: () => {},
       },
     });
@@ -122,11 +123,16 @@ test('权限询问未处理时可取消，并有超时兜底', async ({ page }) 
       configurable: true,
       value: {
         // 回调永远不触发，模拟系统权限弹窗一直未被处理
-        getCurrentPosition: () => {
+        getCurrentPosition: () => {},
+        watchPosition: (success, error, options) => {
           window.__geoCalled = (window.__geoCalled || 0) + 1;
+          window.__watchOptions = window.__watchOptions || [];
+          window.__watchOptions.push(Boolean(options?.enableHighAccuracy));
+          return window.__geoCalled;
         },
-        watchPosition: () => 1,
-        clearWatch: () => {},
+        clearWatch: () => {
+          window.__cleared = (window.__cleared || 0) + 1;
+        },
       },
     });
   });
@@ -140,18 +146,67 @@ test('权限询问未处理时可取消，并有超时兜底', async ({ page }) 
   await page.getByRole('button', { name: '取消等待' }).click();
   await expect(page.getByRole('button', { name: '获取当前位置' })).toBeVisible();
   await expect(page.locator('.status-box')).toContainText('已取消等待');
+  expect(await page.evaluate(() => window.__cleared || 0)).toBeGreaterThanOrEqual(1);
 
   // 第二次请求，用 Playwright clock 快进 21 秒验证 JS 超时兜底
+  await expect(page.locator('.permission-card')).toContainText('已允许');
   await page.clock.install();
   await page.getByRole('button', { name: '获取当前位置' }).click();
   await expect(page.getByRole('button', { name: '取消等待' })).toBeVisible();
-  await page.clock.fastForward(21_000);
 
+  // 先快进 9 秒，确认高精度阶段结束后切换到低精度
+  await page.clock.fastForward(9_000);
+  await expect(page.locator('.status-box')).toContainText('低精度定位');
+  let watchOptions = await page.evaluate(() => window.__watchOptions || []);
+  expect(watchOptions).toContain(false);
+
+  // 再快进到 21 秒，触发整体超时
+  await page.clock.fastForward(12_000);
   await expect(page.locator('.status-box')).toContainText('等待定位超时');
   await expect(page.getByRole('button', { name: '获取当前位置' })).toBeVisible();
-  expect(await page.evaluate(() => window.__geoCalled)).toBeGreaterThanOrEqual(2);
+  expect(await page.evaluate(() => window.__geoCalled)).toBeGreaterThanOrEqual(3);
+  watchOptions = await page.evaluate(() => window.__watchOptions || []);
+  expect(watchOptions).toContain(false);
+  expect(await page.evaluate(() => window.__cleared || 0)).toBeGreaterThanOrEqual(2);
   await page.screenshot({
     path: path.join(ARTIFACTS, 'permission-timeout.png'),
+    fullPage: true,
+  });
+});
+
+test('记录等待首个 GPS 信号超时后给出诊断与重试入口', async ({ page }) => {
+  await page.addInitScript(() => {
+    const status = { state: 'granted', onchange: null };
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: async () => status },
+    });
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: () => {},
+        watchPosition: () => 1,
+        clearWatch: () => {},
+      },
+    });
+  });
+
+  await page.goto('./#/record');
+  await page.clock.install();
+  await page.getByRole('button', { name: '开始记录' }).click();
+  const startSheet = page.locator('dialog.sheet');
+  await startSheet.getByLabel('时间间隔（秒）').fill('0');
+  await startSheet.getByLabel('最小移动距离（米）').fill('0');
+  await startSheet.getByLabel('精度阈值（米）').fill('0');
+  await startSheet.getByRole('button', { name: '开始记录' }).click();
+
+  await expect(page.locator('.pill')).toContainText('等待定位');
+  await page.clock.fastForward(21_000);
+  await expect(page.locator('.alert-card')).toContainText('20 秒未收到 GPS 信号');
+  await expect(page.getByRole('button', { name: '重试定位' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '开启定位权限' })).toBeVisible();
+  await page.screenshot({
+    path: path.join(ARTIFACTS, 'record-no-fix.png'),
     fullPage: true,
   });
 });

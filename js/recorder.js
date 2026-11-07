@@ -49,6 +49,8 @@ let startName = null;
 let starting = false;
 let writeChain = Promise.resolve();
 let wakeLockSentinel = null;
+let acquiringTimer = null;
+const acquiringTimeoutMs = 20_000;
 const listeners = new Set();
 
 // ---------------------------------------------------------------------------
@@ -97,7 +99,30 @@ function enqueue(task) {
   return result;
 }
 
+function clearAcquiringTimer() {
+  if (acquiringTimer !== null) {
+    clearTimeout(acquiringTimer);
+    acquiringTimer = null;
+  }
+}
+
+/** 进入等待定位后 20 秒仍没有任何原始 fix，给出可处理的诊断。 */
+function scheduleAcquiringTimeout() {
+  clearAcquiringTimer();
+  acquiringTimer = setTimeout(() => {
+    acquiringTimer = null;
+    if (state.status !== 'acquiring') return;
+    state.error = {
+      code: 'no-fix',
+      message:
+        '20 秒未收到 GPS 信号。请确认手机定位已开启、站点权限包含“精确位置”，或到开阔处后重试。',
+    };
+    notify();
+  }, acquiringTimeoutMs);
+}
+
 function handleStorageError(error) {
+  clearAcquiringTimer();
   state.error = {
     code: 'storage',
     message: error?.message || '本地保存失败，请检查浏览器存储空间',
@@ -198,6 +223,7 @@ function handleLocationError(error) {
   if (['denied', 'unsupported', 'insecure'].includes(error.code)) {
     // 先阻止新 fix 入队；若有正在写入的首个点，等队列结束后再落定状态。
     state.token += 1;
+    clearAcquiringTimer();
     stopWatch();
     void releaseWakeLock();
     const endAt =
@@ -221,6 +247,7 @@ function handleLocationError(error) {
 
 function handleFix(fix) {
   state.latestFix = fix;
+  clearAcquiringTimer();
   // 收到新 fix 说明定位恢复，清掉超时/暂不可用等临时错误（存储错误保留）。
   if (state.error && state.error.code !== 'storage') state.error = null;
   notify();
@@ -340,6 +367,7 @@ async function processFix(fix, token) {
 // ---------------------------------------------------------------------------
 
 function resetToIdle({ clearFix = true } = {}) {
+  clearAcquiringTimer();
   state.status = 'idle';
   state.track = null;
   state.lastAccepted = null;
@@ -388,7 +416,9 @@ export async function start(sampleInput, options = {}) {
 
     try {
       startWatch({ onFix: handleFix, onError: handleLocationError });
+      scheduleAcquiringTimeout();
     } catch (error) {
+      clearAcquiringTimer();
       state.status = 'idle';
       state.error = {
         code: error.code || 'location',
@@ -410,6 +440,7 @@ export async function pause() {
   if (state.status !== 'acquiring' && state.status !== 'recording') return;
 
   state.token += 1;
+  clearAcquiringTimer();
   stopWatch();
   void releaseWakeLock();
 
@@ -449,7 +480,9 @@ export async function resume() {
 
   try {
     startWatch({ onFix: handleFix, onError: handleLocationError });
+    scheduleAcquiringTimeout();
   } catch (error) {
+    clearAcquiringTimer();
     state.status = 'paused';
     state.error = {
       code: error.code || 'location',
@@ -475,6 +508,7 @@ export async function stop() {
   }
 
   state.token += 1;
+  clearAcquiringTimer();
   stopWatch();
   void releaseWakeLock();
 
@@ -519,6 +553,7 @@ export async function retry() {
     state.lastAccepted?.timestamp ?? state.latestFix?.timestamp ?? Date.now();
 
   state.token += 1;
+  clearAcquiringTimer();
   stopWatch();
   state.error = null;
 
@@ -537,7 +572,9 @@ export async function retry() {
 
   try {
     startWatch({ onFix: handleFix, onError: handleLocationError });
+    scheduleAcquiringTimeout();
   } catch (error) {
+    clearAcquiringTimer();
     state.status = oldTrack ? 'paused' : 'idle';
     state.error = {
       code: error.code || 'location',
@@ -597,7 +634,9 @@ export async function recoverAndResume(track) {
 
     try {
       startWatch({ onFix: handleFix, onError: handleLocationError });
+      scheduleAcquiringTimeout();
     } catch (error) {
+      clearAcquiringTimer();
       state.status = 'paused';
       state.error = {
         code: error.code || 'location',

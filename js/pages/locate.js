@@ -40,6 +40,7 @@ export async function mount(root) {
   let pickOff = null;
   let locating = false;
   let locateRequest = 0;
+  let locateAbort = null;
   let mapReady = false;
   let permissionState = 'unknown';
   let permissionUnwatch = null;
@@ -282,6 +283,8 @@ export async function mount(root) {
   function cancelLocate() {
     if (!locating) return;
     locateRequest += 1;
+    locateAbort?.abort();
+    locateAbort = null;
     locating = false;
     setLocating(false);
     setStatus(
@@ -305,6 +308,8 @@ export async function mount(root) {
     if (locating) return;
     locating = true;
     const token = ++locateRequest;
+    const controller = new AbortController();
+    locateAbort = controller;
     setLocating(true);
     setStatus(
       '正在获取定位… 若浏览器弹出权限询问，请选择“允许”。',
@@ -312,13 +317,38 @@ export async function mount(root) {
     );
 
     try {
-      const fix = await getCurrentFix();
+      const fix = await getCurrentFix({
+        signal: controller.signal,
+        // 已授权时高精度 8 秒没有结果，允许自动尝试一次低精度网络定位
+        fallbackAfter: permissionState === 'granted' ? 8_000 : 0,
+        onPhase: (phase) => {
+          if (destroyed || token !== locateRequest) return;
+          if (phase === 'low') {
+            setStatus(
+              '高精度定位暂时没有结果，正在尝试低精度定位…',
+              'info',
+            );
+          }
+        },
+      });
       if (destroyed || token !== locateRequest) return;
       currentFix = fix;
       renderFix(fix);
       content.classList.remove('hidden');
-      setStatus('');
       updatePermission('granted');
+      if (
+        Number.isFinite(fix.accuracyM) &&
+        fix.accuracyM > 100
+      ) {
+        setStatus(
+          `已获取低精度位置（±${Math.round(
+            fix.accuracyM,
+          )} m）。建议到开阔处，并确认站点权限为“精确位置”。`,
+          'info',
+        );
+      } else {
+        setStatus('');
+      }
       if (mapView) {
         mapView.updateCurrent(fix, { follow: true, pan: true });
         mapView.setViewWgs(fix, 16);
@@ -326,6 +356,7 @@ export async function mount(root) {
       toast('定位成功', { type: 'success' });
     } catch (error) {
       if (destroyed || token !== locateRequest) return;
+      if (error.code === 'cancelled' || error.name === 'AbortError') return;
 
       if (error.code === 'denied') {
         updatePermission('denied');
@@ -337,7 +368,7 @@ export async function mount(root) {
 
       if (error.code === 'timeout') {
         setStatus(
-          '等待定位超时。请确认浏览器弹窗中选择了“允许”，并检查系统定位开关；然后重新请求。',
+          '等待定位超时。请确认浏览器弹窗中选择了“允许”，检查系统定位和“精确位置”权限，或到开阔处重试。',
           'error',
         );
       } else {
@@ -345,6 +376,7 @@ export async function mount(root) {
       }
       toast(error.message || '定位失败', { type: 'error', duration: 3600 });
     } finally {
+      if (locateAbort === controller) locateAbort = null;
       if (token === locateRequest) {
         locating = false;
         if (!destroyed) setLocating(false);
@@ -486,6 +518,8 @@ export async function mount(root) {
   return () => {
     destroyed = true;
     locateRequest += 1;
+    locateAbort?.abort();
+    locateAbort = null;
     permissionUnwatch?.();
     permissionUnwatch = null;
     document.removeEventListener('visibilitychange', onVisibilityChange);

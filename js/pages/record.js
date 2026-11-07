@@ -307,7 +307,7 @@ export async function mount(root) {
     const canRetry =
       !isStorage &&
       ['acquiring', 'recording', 'paused'].includes(s.status);
-    const canOpenPermissionHelp = s.error.code === 'denied';
+    const canOpenPermissionHelp = ['denied', 'no-fix'].includes(s.error.code);
 
     const retryButton = canRetry
       ? h(

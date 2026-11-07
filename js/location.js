@@ -129,41 +129,141 @@ export function watchGeolocationPermission(callback) {
 /**
  * 获取一次当前位置。
  *
- * 除了传给 Geolocation API 的 timeout，还加了一个自己的 JS 定时器：
- * 当权限弹窗一直未被处理时，某些浏览器不会触发原生 timeout，页面会看起来“卡死”。
- * 自己的定时器保证 Promise 一定结束，让 UI 可以恢复并提示用户检查权限。
+ * 用短暂的 watchPosition 而不是 getCurrentPosition：
+ * - watch 可以被 clearWatch 明确取消，不会在超时后留下浏览器内部挂起请求；
+ * - 后续“开始记录”的 watch 不会被上一次定位请求堵塞；
+ * - 高精度阶段无结果时，可选回退到低精度网络定位。
  *
- * @param {{timeout?:number}} [options]
+ * 自己的 JS 定时器保证即使权限弹窗未处理，Promise 也一定结束。
+ *
+ * @param {{
+ *   timeout?: number,
+ *   signal?: AbortSignal|null,
+ *   fallbackAfter?: number,
+ *   onPhase?: ((phase:'high'|'low')=>void)|null
+ * }} [options]
  * @returns {Promise<object>}
  */
-export function getCurrentFix({ timeout = 20_000 } = {}) {
+export function getCurrentFix({
+  timeout = 20_000,
+  signal = null,
+  fallbackAfter = 0,
+  onPhase = null,
+} = {}) {
   assertSupport();
+
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new LocationError('cancelled', '已取消定位'));
+      return;
+    }
+
     let settled = false;
-    let timer = null;
+    let watchId = null;
+    let watchToken = 0;
+    let lowPhase = false;
+    let overallTimer = null;
+    let fallbackTimer = null;
+
+    const cleanup = () => {
+      watchToken += 1;
+      if (overallTimer !== null) clearTimeout(overallTimer);
+      if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+      overallTimer = null;
+      fallbackTimer = null;
+      if (watchId !== null) {
+        try {
+          navigator.geolocation.clearWatch(watchId);
+        } catch {
+          /* ignore */
+        }
+        watchId = null;
+      }
+      signal?.removeEventListener('abort', onAbort);
+    };
 
     const finish = (handler, value) => {
       if (settled) return;
       settled = true;
-      if (timer !== null) clearTimeout(timer);
+      cleanup();
       handler(value);
     };
 
-    timer = setTimeout(() => {
+    const onAbort = () => {
+      finish(reject, new LocationError('cancelled', '已取消定位'));
+    };
+
+    const startWatch = (highAccuracy) => {
+      if (settled) return;
+      if (watchId !== null) {
+        try {
+          navigator.geolocation.clearWatch(watchId);
+        } catch {
+          /* ignore */
+        }
+        watchId = null;
+      }
+
+      const token = ++watchToken;
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (position) => {
+            if (token !== watchToken) return;
+            finish(resolve, normalizePosition(position));
+          },
+          (error) => {
+            if (token !== watchToken) return;
+            const mapped = mapGeolocationError(error);
+            if (
+              !lowPhase &&
+              fallbackAfter > 0 &&
+              (mapped.code === 'timeout' || mapped.code === 'unavailable')
+            ) {
+              enterLowPhase();
+              return;
+            }
+            finish(reject, mapped);
+          },
+          {
+            enableHighAccuracy: highAccuracy,
+            maximumAge: 0,
+            timeout: Math.max(5_000, Math.min(15_000, timeout)),
+          },
+        );
+      } catch (error) {
+        finish(
+          reject,
+          new LocationError('unknown', error?.message || '定位请求失败'),
+        );
+      }
+    };
+
+    const enterLowPhase = () => {
+      if (settled || lowPhase) return;
+      lowPhase = true;
+      onPhase?.('low');
+      startWatch(false);
+    };
+
+    overallTimer = setTimeout(() => {
       finish(
         reject,
         new LocationError(
           'timeout',
-          '等待定位超时。若浏览器弹出了权限询问，请先选择“允许”；若没有弹窗，请检查本站的定位权限与系统定位开关。',
+          '等待定位超时。请确认浏览器弹窗中选择了“允许”，检查系统定位与“精确位置”权限，或到开阔处重试。',
         ),
       );
     }, timeout);
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => finish(resolve, normalizePosition(position)),
-      (error) => finish(reject, mapGeolocationError(error)),
-      { enableHighAccuracy: true, maximumAge: 0, timeout },
-    );
+    if (fallbackAfter > 0 && fallbackAfter < timeout) {
+      fallbackTimer = setTimeout(() => {
+        if (!settled && !lowPhase) enterLowPhase();
+      }, fallbackAfter);
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    onPhase?.('high');
+    startWatch(true);
   });
 }
 
